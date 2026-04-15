@@ -1,0 +1,208 @@
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
+// Firebase
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  runApp(MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: HomePage(),
+    );
+  }
+}
+
+class HomePage extends StatefulWidget {
+  @override
+  _HomePageState createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  final db = FirebaseDatabase.instance.ref();
+
+  bool pump = false;
+
+  int temp = 0;
+  int hum = 0;
+  int soil = 0;
+  int light = 0;
+
+  String recommendation = "Press the button 👇";
+  String lastTime = "";
+
+  @override
+  void initState() {
+    super.initState();
+    getData();
+  }
+
+  // ✅ قراءة البيانات من Firebase (FIXED)
+  void getData() {
+    db.onValue.listen((event) {
+      final data = event.snapshot.value;
+
+      if (data != null) {
+        final map = Map<String, dynamic>.from(data as Map);
+
+        final sensor = Map<String, dynamic>.from(map["sensor"] ?? {});
+
+        setState(() {
+          pump = map["pump"] ?? false;
+          temp = (sensor["temp"] ?? 0).toInt();
+          hum = (sensor["hum"] ?? 0).toInt();
+          soil = (sensor["soil"] ?? 0).toInt();
+          light = (sensor["light"] ?? 0).toInt();
+        });
+      }
+    });
+  }
+
+  // تشغيل / إيقاف المضخة
+  void togglePump(bool value) {
+    setState(() {
+      pump = value;
+    });
+
+    db.update({"pump": value});
+  }
+
+  // AI Recommendation
+  Future<void> getAIRecommendation() async {
+    setState(() {
+      recommendation = "Loading...";
+    });
+
+    try {
+      final response = await http.post(
+        Uri.parse("https://api.groq.com/openai/v1/chat/completions"),
+        headers: {
+          "Authorization": "Bearer gsk_HuN6Um9T1uXtRyRjIWGdyb3FYOTMhkhd4trdsLhHdyx9BCCh5fC",
+          "Content-Type": "application/json"
+        },
+        body: jsonEncode({
+          "model": "llama-3.3-70b-versatile",
+          "messages": [
+            {
+              "role": "user",
+              "content":
+                  "Temperature: $temp °C, Humidity: $hum %, Soil Moisture: $soil % (0=dry, 100=wet), Light: $light. Should I water the plant? Answer only: Water or Don't Water with short reason."
+            }
+          ]
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+      String text = data["choices"][0]["message"]["content"];
+
+      setState(() {
+        recommendation = text;
+        lastTime = DateTime.now().toString().substring(0, 16);
+      });
+
+    } catch (e) {
+      setState(() {
+        recommendation = "Error ❌";
+      });
+    }
+  }
+
+  Widget buildCard(String title, String value, IconData icon) {
+    return Container(
+      margin: EdgeInsets.symmetric(vertical: 8),
+      padding: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 5)],
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: Colors.green),
+          SizedBox(width: 10),
+          Text(title),
+          Spacer(),
+          Text(value, style: TextStyle(fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Color(0xffE8F5E9),
+      appBar: AppBar(
+        title: Text("🌱 Smart Irrigation"),
+        backgroundColor: Colors.green,
+      ),
+      body: Padding(
+        padding: EdgeInsets.all(16),
+        child: SingleChildScrollView(
+          child: Column(
+            children: [
+              buildCard("Temperature", "$temp °C", Icons.thermostat),
+              buildCard("Humidity", "$hum %", Icons.water_drop),
+              buildCard("Soil", "$soil %", Icons.grass),
+              buildCard("Light", "$light lx", Icons.wb_sunny),
+
+              SizedBox(height: 20),
+
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text("Pump"),
+                  Switch(
+                    value: pump,
+                    onChanged: togglePump,
+                  )
+                ],
+              ),
+
+              SizedBox(height: 15),
+
+              ElevatedButton(
+                onPressed: getAIRecommendation,
+                child: Text("AI Recommendation 🤖"),
+              ),
+
+              SizedBox(height: 20),
+
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.all(15),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(15),
+                  boxShadow: [
+                    BoxShadow(color: Colors.black12, blurRadius: 5)
+                  ],
+                ),
+                child: Text(
+                  recommendation,
+                  style: TextStyle(fontSize: 16),
+                ),
+              ),
+
+              SizedBox(height: 10),
+
+              Text(
+                lastTime.isEmpty ? "" : "Last update: $lastTime",
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
